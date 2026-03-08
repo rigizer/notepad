@@ -10,14 +10,15 @@ services:
       - NODE_ENV=production
     volumes:
       # Named volume so notepad.txt survives container restarts / re-builds
-      - notepad-data:/app/data
+      - ./data:/app/data
+      # - notepad-data:/app/data
     networks:
       - appleboy
 
 # ── Volumes ───────────────────────────────────────────────────────────────────
-volumes:
-  notepad-data:
-    name: notepad-data
+# volumes:
+#   notepad-data:
+#     name: notepad-data
 
 # ── Networks ──────────────────────────────────────────────────────────────────
 networks:
