@@ -109,6 +109,9 @@ io.on('connection', (socket: Socket) => {
     content = payload.content;
     version += 1;
 
+    // Acknowledge to the sender so it can update its local version counter
+    socket.emit('ack', { version });
+
     // Broadcast to every OTHER connected client
     socket.broadcast.emit('update', { content, version });
 
