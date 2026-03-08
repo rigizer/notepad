@@ -1,17 +1,21 @@
 # Notepad
 
 웹 브라우저로 접속하면 누구나 동시에 편집할 수 있는 실시간 공유 메모장입니다.
-저장 버튼 없이 다른 사람의 변경 사항이 즉시 화면에 반영되며, 서비스를 재시작해도 내용이 유지됩니다.
+10개의 독립 채널을 제공하며, 채널별로 제목과 내용을 실시간으로 함께 편집할 수 있습니다.
+저장 버튼 없이 변경 사항이 즉시 반영되고, 서비스를 재시작해도 내용이 유지됩니다.
 
 ---
 
 ## 기능
 
-- 실시간 동시 편집 (WebSocket / Socket.IO)
-- 자동 저장 (파일 기반, DB 불필요)
-- 접속자 수 실시간 표시
-- 연결 상태 / 저장 상태 인디케이터
-- 글자 수 · 줄 수 카운터
+- **10개 채널** — 채널별 독립 제목 + 내용
+- **실시간 동시 편집** — WebSocket(Socket.IO)으로 즉시 전파
+- **실시간 제목 편집** — 채널 내부에서 제목을 입력하면 목록에도 실시간 반영
+- **접속자 수** — 전체 + 채널별 동시 접속자 수 실시간 표시
+- **자동 저장** — 파일 기반, DB 불필요, 재시작 후 복원
+- **Tab 들여쓰기** — Tab 키로 공백 4칸 삽입
+- **연결 상태 / 저장 상태 인디케이터**
+- **글자 수 · 줄 수 카운터**
 
 ---
 
@@ -23,67 +27,68 @@
 | 언어 | TypeScript 5 |
 | HTTP 서버 | Express 4 |
 | 실시간 통신 | Socket.IO 4 (WebSocket) |
-| 영속성 | 로컬 파일 (`data/notepad.txt`) |
+| 영속성 | 로컬 파일 (`data/channels.json`) |
 | 컨테이너 | Docker + Docker Compose |
 
 ---
 
 ## 서비스 구성 및 기술적 고려사항
 
-### 1. 실시간 동기화 — Socket.IO
+### 1. 10채널 구조 — Socket.IO 룸 기반 격리
 
-WebSocket(Socket.IO)을 사용해 저장 버튼 없이 편집 내용이 모든 접속자에게 즉시 전파됩니다.
+각 채널은 독립된 `{ title, content, version }` 상태를 가지며, Socket.IO **룸(room)** 으로 격리됩니다.
+
+```
+클라이언트 A (채널 3 입장)   →  socket.join("channel-3")
+클라이언트 A 입력             →  서버가 "channel-3" 룸에만 브로드캐스트
+클라이언트 B (채널 5 입장)   →  "channel-3" 이벤트를 받지 않음
+```
+
+- `joinChannel` / `leaveChannel` 이벤트로 룸 입퇴장을 명시적으로 관리합니다.
+- 제목 변경(`updateTitle`)만 **전체 클라이언트**에게 브로드캐스트합니다 — 목록 화면에서 실시간으로 제목이 갱신되어야 하기 때문입니다.
+
+### 2. 실시간 동기화 — 에코 루프 방지
 
 ```
 클라이언트 A 입력
-  └─▶ 서버 (update 이벤트 수신)
-        ├─▶ 클라이언트 B (update 이벤트 브로드캐스트)
-        └─▶ 클라이언트 C (update 이벤트 브로드캐스트)
+  └─▶ 서버 (updateContent 수신)
+        ├─▶ ack         → 클라이언트 A (버전 갱신용)
+        └─▶ contentUpdate → 채널 룸의 다른 클라이언트 (B, C …)
 ```
 
-서버는 변경을 보낸 클라이언트를 제외한 나머지(`socket.broadcast`)에게만 전송해 **에코 루프**를 방지합니다.
+`socket.broadcast.to(room).emit()` 으로 발신자를 제외한 나머지에게만 전송해 에코 루프를 방지합니다.
 
-### 2. 버전 번호로 충돌 방지
+### 3. 버전 번호로 충돌 방지
 
-모든 `update` 이벤트에는 단조 증가하는 `version` 번호가 포함됩니다.
+모든 `updateContent` 이벤트에는 단조 증가하는 `version` 번호가 포함됩니다.
 
-- 서버는 클라이언트가 보낸 버전이 현재보다 **낮으면** 해당 업데이트를 거부하고 최신 상태를 `init` 이벤트로 돌려보냅니다.
-- 클라이언트도 수신한 버전이 현재보다 낮은 이벤트는 무시합니다.
+- 서버는 수신된 버전이 현재보다 **낮으면** 거부하고 `channelInit`(최신 상태)을 발신자에게 반송합니다.
+- 이 방식으로 네트워크 지연·순서 역전으로 인한 **오래된 내용 덮어쓰기**를 방지합니다.
 
-이 방식으로 네트워크 지연·순서 역전으로 인한 **오래된 내용 덮어쓰기**를 방지합니다.
+### 4. Ack 이벤트로 글자 씹힘 방지
 
-### 3. Ack 이벤트로 글자 씹힘 방지
+서버가 업데이트를 수락해도 발신자에게 알리지 않으면, 클라이언트의 `localVersion`이 갱신되지 않아 연속 전송 시 버전 충돌이 반복됩니다.
 
-초기 구현에서는 서버가 업데이트를 수락해도 발신자에게 알리지 않아, 클라이언트의 `localVersion`이 갱신되지 않았습니다.
-
-**문제 재현 시나리오:**
+**문제 시나리오:**
 ```
 클라이언트 전송  →  { content: "ab", version: 0 }
-서버 수락        →  내부 version = 1, 다른 클라이언트에 브로드캐스트
+서버 수락        →  내부 version = 1, 브로드캐스트
 클라이언트 전송  →  { content: "abc", version: 0 }  ← version이 0 그대로!
-서버 판단        →  0 < 1 이므로 거부, init { content:"ab", version:1 } 반송
-클라이언트 수신  →  textarea를 "ab"로 덮어씀 → "c" 씹힘
+서버 판단        →  0 < 1 이므로 거부 → "c" 씹힘
 ```
 
-**해결책: `ack` 이벤트 추가**
-
-서버는 업데이트 수락 후 발신자에게 `ack { version }` 이벤트를 돌려보냅니다.
-클라이언트는 `ack`를 받으면 `localVersion`을 갱신하므로, 이후 전송은 올바른 버전 번호를 사용합니다.
-
+**해결책: `contentAck` 이벤트**
 ```
-클라이언트 전송  →  { content: "ab", version: 0 }
-서버 수락        →  ack { version: 1 } 발신자에게 반환
-클라이언트 수신  →  localVersion = 1
-클라이언트 전송  →  { content: "abc", version: 1 }  ← 정확한 버전
-서버 수락        →  정상 처리
+서버 수락  →  contentAck { version: 1 } 발신자에게 반환
+클라이언트 →  localVersion = 1 갱신 → 이후 전송은 version: 1 사용
 ```
 
-추가로, `ack` 수신 전까지 들어오는 원격 업데이트는 즉시 적용하지 않고 `pendingRemote`에 대기시켰다가 `ack` 후에 반영합니다. 이로써 타이핑 도중 다른 사람의 변경이 들어와 내 입력이 덮이는 문제도 방지합니다.
+추가로, `ack` 대기 중 들어온 원격 업데이트는 `pendingRemote`에 보관했다가 `ack` 후에 적용합니다. 타이핑 도중 다른 사람의 변경이 내 텍스트를 덮어쓰지 못하게 합니다.
 
-### 4. IME 조합 중 전송 차단 (한국어 · 중국어 · 일본어)
+### 5. IME 조합 중 전송 차단 (한국어 · 중국어 · 일본어)
 
-IME(입력기)는 여러 키입력을 하나의 문자로 조합하는 동안 `compositionstart` ~ `compositionend` 이벤트를 발생시킵니다.
-조합 도중 소켓 전송이 일어나면 미완성 문자가 서버로 전달되고, 서버 응답이 돌아오면서 조합 중인 글자가 끊기거나 사라집니다.
+IME는 여러 키입력을 하나의 문자로 조합하는 동안 `compositionstart` ~ `compositionend` 이벤트를 발생시킵니다.
+조합 도중 소켓 전송이 일어나면 미완성 글자가 전달되어 서버 응답이 돌아올 때 조합 중인 글자가 깨집니다.
 
 클라이언트는 `isComposing` 플래그로 이 구간을 추적하고, `compositionend` 이후에만 전송합니다.
 
@@ -91,45 +96,69 @@ IME(입력기)는 여러 키입력을 하나의 문자로 조합하는 동안 `c
 editor.addEventListener('compositionstart', () => { isComposing = true; });
 editor.addEventListener('compositionend',   () => {
   isComposing = false;
-  // 조합 완료 후 전송 예약
   clearTimeout(sendTimer);
-  sendTimer = setTimeout(doSend, SEND_DEBOUNCE_MS);
+  sendTimer = setTimeout(doSendContent, SEND_DEBOUNCE_MS);
 });
 ```
 
-### 5. 디바운싱 — 두 겹의 지연 처리
+### 6. Tab 키 — 4칸 공백 들여쓰기
 
-| 위치 | 지연 | 목적 |
-|---|---|---|
-| 클라이언트 | 80 ms | 타이핑 중 소켓 메시지 폭주 억제 |
-| 서버 | 500 ms | 디스크 I/O 폭주 억제 |
+브라우저 기본 동작(포커스 이동)을 막고 커서 위치에 공백 4개를 삽입합니다.
+선택 영역이 있으면 선택 범위를 공백으로 치환합니다.
 
-클라이언트는 80 ms 동안 입력이 없으면 서버에 전송하고, 서버는 마지막 변경으로부터 500 ms 후에 파일에 씁니다.
-결과적으로 빠르게 타이핑하는 동안 디스크 쓰기는 초당 최대 2회 수준으로 제한됩니다.
+```javascript
+editor.addEventListener('keydown', (e) => {
+  if (e.key !== 'Tab') return;
+  e.preventDefault();
+  const start = editor.selectionStart;
+  editor.value = editor.value.substring(0, start) + '    '
+               + editor.value.substring(editor.selectionEnd);
+  editor.selectionStart = editor.selectionEnd = start + 4;
+  editor.dispatchEvent(new Event('input')); // 동기화 흐름 유지
+});
+```
 
-### 6. 파일 기반 영속성 — DB 없이 재시작 후 복원
+### 7. 디바운싱 — 두 겹의 지연 처리
 
-데이터베이스 대신 `data/notepad.txt` 파일에 내용을 저장합니다.
+| 위치 | 대상 | 지연 | 목적 |
+|---|---|---|---|
+| 클라이언트 | 내용 전송 | 80 ms | 타이핑 중 소켓 메시지 폭주 억제 |
+| 클라이언트 | 제목 전송 | 300 ms | 제목 입력 중 소켓 메시지 억제 |
+| 서버 | 디스크 쓰기 | 500 ms | 디스크 I/O 폭주 억제 |
+
+### 8. 파일 기반 영속성 — DB 없이 재시작 후 복원
+
+데이터베이스 대신 `data/channels.json` 파일에 10개 채널의 제목·내용·버전을 저장합니다.
 
 - 서버 시작 시 파일을 읽어 메모리에 올립니다.
-- 변경이 있을 때마다 디바운싱 후 파일에 씁니다.
+- 변경이 있을 때마다 디바운싱(500 ms) 후 파일에 씁니다.
 - `SIGINT` / `SIGTERM` 수신 시 디바운스 타이머를 무시하고 **즉시 동기 쓰기** 후 종료합니다 (`flushSync`).
 
 도커 볼륨(`notepad-data`)에 마운트하면 컨테이너 교체·재시작과 무관하게 데이터가 유지됩니다.
 
-### 7. 커서 위치 보존
+### 9. 실시간 접속자 수 — 전체 + 채널별
+
+`users` 이벤트는 전체 접속자 수와 채널별 접속자 수를 함께 전달합니다.
+
+```typescript
+{ total: number, channels: number[] }  // channels[i] = i번 채널의 현재 인원
+```
+
+채널 입장(`joinChannel`)·퇴장(`leaveChannel`)·연결·해제 시마다 전체 클라이언트에 브로드캐스트되어 목록 화면의 카드와 채널 화면의 배지가 실시간으로 갱신됩니다.
+
+### 10. 커서 위치 보존
 
 원격 변경을 수신했을 때 `textarea.value`를 단순 대입하면 커서가 맨 끝으로 이동합니다.
-클라이언트는 커서 앞 텍스트가 변하지 않았으면 커서를 그대로 유지하고, 변했으면 길이 변화량(`delta`)으로 보정합니다.
+클라이언트는 커서 앞 텍스트 prefix를 비교해 동일하면 커서를 그대로 유지하고, 달라졌으면 길이 변화량(`delta`)으로 보정합니다.
 
-### 8. 멀티 스테이지 Docker 빌드
+### 11. 멀티 스테이지 Docker 빌드
 
 ```
 builder 스테이지   node:20-alpine  →  tsc 컴파일
 runner 스테이지    node:20-alpine  →  prod 의존성 + dist/ + public/ 만 포함
 ```
 
-빌드 도구(ts-node, typescript 등)를 최종 이미지에서 제외해 **이미지 크기**를 최소화합니다.
+빌드 도구(ts-node, typescript 등)를 최종 이미지에서 제외해 이미지 크기를 최소화합니다.
 
 ---
 
@@ -142,10 +171,7 @@ runner 스테이지    node:20-alpine  →  prod 의존성 + dist/ + public/ 만
 ### 개발 모드 (ts-node)
 
 ```bash
-# 의존성 설치
 npm install
-
-# 개발 서버 시작
 npm run dev
 ```
 
@@ -187,10 +213,8 @@ docker compose down
 ### 개별 Docker 명령으로 실행하는 경우
 
 ```bash
-# 빌드
 docker build -t notepad .
 
-# 실행
 docker run -d \
   --name notepad \
   --network appleboy \
@@ -209,12 +233,12 @@ docker run -d \
 ```
 notepad/
 ├── src/
-│   └── server.ts          # Express + Socket.IO 서버
+│   └── server.ts          # Express + Socket.IO 서버 (10채널 관리)
 ├── public/
-│   ├── index.html         # UI
-│   ├── style.css          # 스타일
+│   ├── index.html         # 목록 뷰 + 채널 뷰 (SPA)
+│   ├── style.css          # 다크 테마 스타일
 │   └── client.js          # 클라이언트 Socket.IO 로직
-├── data/                  # 런타임 생성 — notepad.txt 저장 위치
+├── data/                  # 런타임 생성 — channels.json 저장 위치
 ├── dist/                  # tsc 빌드 결과물 (gitignore)
 ├── Dockerfile
 ├── docker-compose.yml

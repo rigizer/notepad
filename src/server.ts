@@ -7,53 +7,62 @@ import * as path from 'path';
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
-const PORT = Number(process.env.PORT) || 5050;
-const DATA_DIR = path.join(__dirname, '..', 'data');
-const DATA_FILE = path.join(DATA_DIR, 'notepad.txt');
-const SAVE_DEBOUNCE_MS = 500;   // wait 500 ms of silence before writing to disk
+const PORT          = Number(process.env.PORT) || 5050;
+const DATA_DIR      = path.join(__dirname, '..', 'data');
+const DATA_FILE     = path.join(DATA_DIR, 'channels.json');
+const SAVE_DEBOUNCE = 500;
+const NUM_CHANNELS  = 10;
 
 // ---------------------------------------------------------------------------
-// State
+// Data model
 // ---------------------------------------------------------------------------
-let content = '';
-let version = 0;          // monotonically increasing version counter
+interface Channel {
+  title:   string;
+  content: string;
+  version: number;
+}
+
+let channels: Channel[] = [];
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
+function defaultChannels(): Channel[] {
+  return Array.from({ length: NUM_CHANNELS }, (_, i) => ({
+    title:   `채널 ${i + 1}`,
+    content: '',
+    version: 0,
+  }));
+}
+
 // ---------------------------------------------------------------------------
-// File persistence helpers
+// Persistence helpers
 // ---------------------------------------------------------------------------
 function ensureDataDir(): void {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 
-function loadContent(): string {
+function loadChannels(): Channel[] {
   try {
-    return fs.readFileSync(DATA_FILE, 'utf-8');
-  } catch {
-    return '';
-  }
+    const raw  = fs.readFileSync(DATA_FILE, 'utf-8');
+    const data = JSON.parse(raw) as Channel[];
+    if (Array.isArray(data) && data.length === NUM_CHANNELS) return data;
+  } catch { /* file missing or corrupt → use defaults */ }
+  return defaultChannels();
 }
 
-function scheduleSave(text: string): void {
+function scheduleSave(): void {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    fs.writeFile(DATA_FILE, text, 'utf-8', (err) => {
+    fs.writeFile(DATA_FILE, JSON.stringify(channels, null, 2), 'utf-8', (err) => {
       if (err) console.error('[persist] write error:', err);
-      else console.log(`[persist] saved (${Buffer.byteLength(text, 'utf-8')} bytes)`);
+      else     console.log('[persist] saved');
     });
-  }, SAVE_DEBOUNCE_MS);
+  }, SAVE_DEBOUNCE);
 }
 
-// Save immediately on process exit to avoid losing in-flight debounce
 function flushSync(): void {
-  if (saveTimer) {
-    clearTimeout(saveTimer);
-    saveTimer = null;
-  }
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
   try {
-    fs.writeFileSync(DATA_FILE, content, 'utf-8');
+    fs.writeFileSync(DATA_FILE, JSON.stringify(channels, null, 2), 'utf-8');
     console.log('[persist] flushed on exit');
   } catch (err) {
     console.error('[persist] flush error:', err);
@@ -61,73 +70,130 @@ function flushSync(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Server bootstrap
+// Bootstrap
 // ---------------------------------------------------------------------------
 ensureDataDir();
-content = loadContent();
-console.log(`[persist] loaded ${Buffer.byteLength(content, 'utf-8')} bytes from disk`);
+channels = loadChannels();
+console.log(`[persist] loaded ${NUM_CHANNELS} channels`);
 
-const app = express();
+const app        = express();
 const httpServer = createServer(app);
-const io = new Server(httpServer, {
-  // Allow large payloads (default 1 MB is fine for a notepad)
-  maxHttpBufferSize: 2 * 1024 * 1024, // 2 MB
-});
+const io         = new Server(httpServer, { maxHttpBufferSize: 2 * 1024 * 1024 });
 
-// Serve static files from public/
 app.use(express.static(path.join(__dirname, '..', 'public')));
 
-// Health check endpoint
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', version, users: io.engine.clientsCount });
+  res.json({ status: 'ok', users: io.engine.clientsCount });
 });
 
 // ---------------------------------------------------------------------------
-// Socket.IO event handling
+// Helpers
+// ---------------------------------------------------------------------------
+const roomName = (id: number) => `channel-${id}`;
+
+interface UsersPayload {
+  total:    number;
+  channels: number[];   // per-channel user count, index = channelId
+}
+
+function broadcastUsers(): void {
+  const channelCounts = Array.from({ length: NUM_CHANNELS }, (_, i) => {
+    const room = io.sockets.adapter.rooms.get(roomName(i));
+    return room ? room.size : 0;
+  });
+  const payload: UsersPayload = { total: io.engine.clientsCount, channels: channelCounts };
+  io.emit('users', payload);
+}
+
+// ---------------------------------------------------------------------------
+// Socket.IO
 // ---------------------------------------------------------------------------
 io.on('connection', (socket: Socket) => {
   console.log(`[ws] connected: ${socket.id}`);
 
-  // 1. Send current state to the new client
-  socket.emit('init', { content, version });
+  // Send full channel list to the newly connected client
+  socket.emit('listState', channels.map((ch, i) => ({ id: i, title: ch.title })));
+  broadcastUsers();
 
-  // 2. Notify everyone about the new user count
-  io.emit('users', io.engine.clientsCount);
+  // ── Join a channel ──────────────────────────────────────────────────────
+  socket.on('joinChannel', ({ channelId }: { channelId: number }) => {
+    if (channelId < 0 || channelId >= NUM_CHANNELS) return;
+    socket.join(roomName(channelId));
+    const ch = channels[channelId];
+    socket.emit('channelInit', {
+      channelId,
+      title:   ch.title,
+      content: ch.content,
+      version: ch.version,
+    });
+    broadcastUsers(); // update per-channel counts for everyone
+  });
 
-  // 3. Handle content updates from a client
-  //    Payload: { content: string, version: number }
-  socket.on('update', (payload: { content: string; version: number }) => {
-    // Accept the update only if it is based on the current version or newer.
-    // This prevents a stale client from overwriting a newer edit.
-    if (typeof payload.content !== 'string') return;
-    if (payload.version < version) {
-      // Client is behind — send it the authoritative state instead
-      socket.emit('init', { content, version });
+  // ── Leave a channel ─────────────────────────────────────────────────────
+  socket.on('leaveChannel', ({ channelId }: { channelId: number }) => {
+    if (channelId < 0 || channelId >= NUM_CHANNELS) return;
+    socket.leave(roomName(channelId));
+    broadcastUsers(); // update per-channel counts for everyone
+  });
+
+  // ── Content update ──────────────────────────────────────────────────────
+  socket.on('updateContent', (payload: {
+    channelId: number;
+    content:   string;
+    version:   number;
+  }) => {
+    const { channelId, content, version } = payload;
+    if (channelId < 0 || channelId >= NUM_CHANNELS) return;
+    if (typeof content !== 'string') return;
+
+    const ch = channels[channelId];
+
+    if (version < ch.version) {
+      // Stale update – send authoritative state back to the sender
+      socket.emit('channelInit', {
+        channelId,
+        title:   ch.title,
+        content: ch.content,
+        version: ch.version,
+      });
       return;
     }
 
-    content = payload.content;
-    version += 1;
+    ch.content  = content;
+    ch.version += 1;
 
-    // Acknowledge to the sender so it can update its local version counter
-    socket.emit('ack', { version });
+    socket.emit('contentAck', { channelId, version: ch.version });
+    socket.to(roomName(channelId)).emit('contentUpdate', {
+      channelId,
+      content,
+      version: ch.version,
+    });
 
-    // Broadcast to every OTHER connected client
-    socket.broadcast.emit('update', { content, version });
-
-    // Persist to disk (debounced)
-    scheduleSave(content);
+    scheduleSave();
   });
 
-  // 4. Clean up
+  // ── Title update (last-write-wins, no versioning needed) ────────────────
+  socket.on('updateTitle', (payload: { channelId: number; title: string }) => {
+    const { channelId, title } = payload;
+    if (channelId < 0 || channelId >= NUM_CHANNELS) return;
+    if (typeof title !== 'string') return;
+
+    channels[channelId].title = title.slice(0, 100);
+
+    // Notify all clients (both list viewers and channel users)
+    io.emit('titleUpdate', { channelId, title: channels[channelId].title });
+    scheduleSave();
+  });
+
+  // ── Disconnect ──────────────────────────────────────────────────────────
   socket.on('disconnect', () => {
     console.log(`[ws] disconnected: ${socket.id}`);
-    io.emit('users', io.engine.clientsCount);
+    broadcastUsers();
   });
 });
 
 // ---------------------------------------------------------------------------
-// Start listening
+// Start
 // ---------------------------------------------------------------------------
 httpServer.listen(PORT, () => {
   console.log(`[server] listening on http://0.0.0.0:${PORT}`);
@@ -143,5 +209,5 @@ const shutdown = (signal: string) => {
   setTimeout(() => process.exit(1), 5000).unref();
 };
 
-process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGINT',  () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));

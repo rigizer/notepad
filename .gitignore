@@ -140,3 +140,4 @@ vite.config.ts.timestamp-*
 
 # Project specific
 data/*.txt
+data/*.json
