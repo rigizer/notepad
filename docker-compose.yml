@@ -1,0 +1,25 @@
+services:
+  notepad:
+    build: .
+    container_name: notepad
+    restart: unless-stopped
+    ports:
+      - "5050:5050"
+    environment:
+      - PORT=5050
+      - NODE_ENV=production
+    volumes:
+      # Named volume so notepad.txt survives container restarts / re-builds
+      - notepad-data:/app/data
+    networks:
+      - appleboy
+
+# ── Volumes ───────────────────────────────────────────────────────────────────
+volumes:
+  notepad-data:
+    name: notepad-data
+
+# ── Networks ──────────────────────────────────────────────────────────────────
+networks:
+  appleboy:
+    external: true   # docker network create appleboy  (run once on the host)

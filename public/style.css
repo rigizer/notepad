@@ -1,0 +1,137 @@
+/* ─── Reset & base ─────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #1e1e2e;
+  --surface:   #27273a;
+  --border:    #3a3a55;
+  --accent:    #89b4fa;
+  --accent2:   #a6e3a1;
+  --text:      #cdd6f4;
+  --muted:     #6c7086;
+  --danger:    #f38ba8;
+  --bar-h:     48px;
+  --radius:    8px;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-size: 14px;
+}
+
+/* ─── Layout ───────────────────────────────────────────────────────── */
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ─── Top bar ──────────────────────────────────────────────────────── */
+#topbar {
+  height: var(--bar-h);
+  min-height: var(--bar-h);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 16px;
+  user-select: none;
+}
+
+#topbar h1 {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: .03em;
+  color: var(--accent);
+  flex: 1;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 99px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  transition: color .2s, border-color .2s;
+}
+
+.badge .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: background .2s;
+}
+
+/* connection states */
+.badge.connected   { color: var(--accent2); border-color: var(--accent2); }
+.badge.connected .dot { background: var(--accent2); }
+
+.badge.disconnected { color: var(--danger); border-color: var(--danger); }
+.badge.disconnected .dot { background: var(--danger); }
+
+/* user count badge */
+#user-badge {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* save indicator */
+#save-badge { transition: opacity .4s; }
+#save-badge.hidden { opacity: 0; pointer-events: none; }
+
+/* ─── Textarea ─────────────────────────────────────────────────────── */
+#editor-wrap {
+  flex: 1;
+  display: flex;
+  padding: 16px;
+  overflow: hidden;
+}
+
+#editor {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 14px;
+  line-height: 1.7;
+  padding: 20px 24px;
+  resize: none;
+  outline: none;
+  transition: border-color .2s;
+  caret-color: var(--accent);
+}
+
+#editor:focus {
+  border-color: var(--accent);
+}
+
+#editor::placeholder {
+  color: var(--muted);
+}
+
+/* ─── Bottom status bar ────────────────────────────────────────────── */
+#statusbar {
+  height: 28px;
+  min-height: 28px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 16px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+#statusbar span { transition: color .2s; }

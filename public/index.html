@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Notepad</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+  <!-- ── Top bar ──────────────────────────────────────────────────── -->
+  <header id="topbar">
+    <h1>Notepad</h1>
+
+    <span class="badge" id="conn-badge">
+      <span class="dot"></span>
+      <span id="conn-text">연결 중…</span>
+    </span>
+
+    <span class="badge" id="user-badge">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+        <circle cx="9" cy="7" r="4"/>
+        <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+        <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+      </svg>
+      <span id="user-count">0</span>명 접속 중
+    </span>
+
+    <span class="badge hidden" id="save-badge">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+        <polyline points="17 21 17 13 7 13 7 21"/>
+        <polyline points="7 3 7 8 15 8"/>
+      </svg>
+      저장 중…
+    </span>
+  </header>
+
+  <!-- ── Editor ───────────────────────────────────────────────────── -->
+  <div id="editor-wrap">
+    <textarea
+      id="editor"
+      placeholder="여기에 내용을 입력하세요. 접속한 모든 사용자에게 실시간으로 반영됩니다."
+      spellcheck="false"
+    ></textarea>
+  </div>
+
+  <!-- ── Status bar ───────────────────────────────────────────────── -->
+  <footer id="statusbar">
+    <span id="char-count">0자</span>
+    <span id="line-count">1줄</span>
+    <span id="version-label">v0</span>
+  </footer>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/client.js"></script>
+</body>
+</html>
