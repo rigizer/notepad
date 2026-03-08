@@ -16,8 +16,16 @@
   --radius:   10px;
 }
 
-html, body {
+html {
   height: 100%;
+}
+
+body {
+  /* 1st choice: dvh shrinks when the virtual keyboard appears (Chrome 108+, iOS 15.4+) */
+  height: 100dvh;
+  /* Fallback for older browsers — JS visualViewport listener overrides this inline */
+  height: 100%;
+  overflow: hidden; /* prevent double-scrollbar; only #editor scrolls */
   background: var(--bg);
   color: var(--text);
   font-family: 'Segoe UI', system-ui, sans-serif;

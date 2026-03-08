@@ -403,6 +403,23 @@
       .replace(/"/g, '&quot;');
   }
 
+  // ── Virtual keyboard: keep layout above the keyboard on mobile ───────────
+  //
+  // Problem: when the OS keyboard appears, `height: 100%` stays fixed at the
+  // original window height, so the keyboard overlaps the bottom of the page.
+  //
+  // Fix (two layers):
+  //   1. CSS `height: 100dvh` — automatically shrinks on Chrome 108+ / iOS 15.4+
+  //   2. JS visualViewport listener — fallback for older mobile browsers
+  //      visualViewport.height reports the visible area EXCLUDING the keyboard.
+  if (window.visualViewport) {
+    const applyViewportHeight = () => {
+      document.body.style.height = window.visualViewport.height + 'px';
+    };
+    window.visualViewport.addEventListener('resize', applyViewportHeight);
+    applyViewportHeight();
+  }
+
   // ── Boot ─────────────────────────────────────────────────────────────────
   setConnected(false);
   renderChannelGrid();

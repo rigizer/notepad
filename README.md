@@ -14,6 +14,7 @@
 - **접속자 수** — 전체 + 채널별 동시 접속자 수 실시간 표시
 - **자동 저장** — 파일 기반, DB 불필요, 재시작 후 복원
 - **Tab 들여쓰기** — Tab 키로 공백 4칸 삽입
+- **모바일 키보드 대응** — 가상 키보드 위로 레이아웃 유지
 - **연결 상태 / 저장 상태 인디케이터**
 - **글자 수 · 줄 수 카운터**
 
@@ -151,7 +152,39 @@ editor.addEventListener('keydown', (e) => {
 원격 변경을 수신했을 때 `textarea.value`를 단순 대입하면 커서가 맨 끝으로 이동합니다.
 클라이언트는 커서 앞 텍스트 prefix를 비교해 동일하면 커서를 그대로 유지하고, 달라졌으면 길이 변화량(`delta`)으로 보정합니다.
 
-### 11. 멀티 스테이지 Docker 빌드
+### 11. 모바일 가상 키보드 대응
+
+모바일 브라우저에서 가상 키보드가 올라오면 뷰포트 높이가 줄어들지 않아 키보드가 하단 UI를 가리는 문제가 있습니다.
+
+**두 겹의 해결책:**
+
+| 방법 | 대상 브라우저 |
+|---|---|
+| CSS `height: 100dvh` | Chrome 108+, iOS Safari 15.4+ |
+| JS `visualViewport.height` | 구형 iOS Safari 등 |
+
+```css
+body {
+  height: 100dvh;  /* 키보드 등장 시 자동 축소 */
+  height: 100%;    /* dvh 미지원 브라우저 폴백 */
+  overflow: hidden;
+}
+```
+
+```javascript
+// visualViewport.height는 가상 키보드를 제외한 실제 가시 높이
+if (window.visualViewport) {
+  const apply = () => {
+    document.body.style.height = window.visualViewport.height + 'px';
+  };
+  window.visualViewport.addEventListener('resize', apply);
+  apply();
+}
+```
+
+body 높이가 바뀌면 `height: 100%`를 사용하는 하위 flex 컨테이너들이 연쇄적으로 재조정되어, 헤더/푸터는 고정되고 editor 영역만 키보드 위까지 축소됩니다.
+
+### 12. 멀티 스테이지 Docker 빌드
 
 ```
 builder 스테이지   node:20-alpine  →  tsc 컴파일
